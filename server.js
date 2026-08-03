@@ -1,15 +1,44 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Временное хранилище кодов подтверждения (в оперативной памяти)
 const verificationCodes = new Map();
-const usersProfiles = new Map();
 
-// Ваша новая рабочая ссылка из Google Apps Script
+// Путь к файлу базы данных пользователей
+const USERS_FILE = path.join(__dirname, 'users.json');
+
+// Ваша рабочая ссылка из Google Apps Script
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxGF1m20kZmxGzBf3ZGPRItlpaP-2fW_ogmhm-ZKiT7FkInBknrwPmPs0gyaQKQOPXb4w/exec";
+
+// Функция чтения пользователей из файла
+function getUsers() {
+    try {
+        if (!fs.existsSync(USERS_FILE)) {
+            fs.writeFileSync(USERS_FILE, JSON.stringify({}), 'utf8');
+            return {};
+        }
+        const data = fs.readFileSync(USERS_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (err) {
+        console.error('Ошибка чтения users.json:', err);
+        return {};
+    }
+}
+
+// Функция сохранения пользователей в файл
+function saveUsers(usersData) {
+    try {
+        fs.writeFileSync(USERS_FILE, JSON.stringify(usersData, null, 4), 'utf8');
+    } catch (err) {
+        console.error('Ошибка записи users.json:', err);
+    }
+}
 
 // 1. Отправка реального кода через Google API
 app.post('/api/send-code', async (req, res) => {
@@ -17,23 +46,22 @@ app.post('/api/send-code', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email обязателен' });
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    
     verificationCodes.set(email, code);
+    
+    // Код живет 5 минут
     setTimeout(() => verificationCodes.delete(email), 5 * 60 * 1000);
 
     try {
         const response = await fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'text/plain;charset=utf-8',
-            },
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({ email: email, code: code }),
             redirect: 'follow'
         });
         
         if (!response.ok) throw new Error('Google вернул ошибку при отправке');
         
-        console.log(`Реальный код ${code} успешно отправлен на ${email}`);
+        console.log(`Код ${code} отправлен на ${email}`);
         res.json({ success: true, message: 'Код отправлен' });
     } catch (error) {
         console.error('Ошибка:', error);
@@ -54,18 +82,46 @@ app.post('/api/verify-code', (req, res) => {
     res.json({ success: true, message: 'Код подтвержден' });
 });
 
-// 3. Сохранение профиля
+// 3. Сохранение/Обновление профиля в файл (JSON База Данных)
 app.post('/api/save-profile', (req, res) => {
     const { email, nickname, avatar } = req.body;
     if (!email || !nickname) return res.status(400).json({ error: 'Заполните никнейм' });
 
-    const userAvatar = avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}`;
-    usersProfiles.set(email, { nickname, avatar: userAvatar });
+    const users = getUsers();
     
-    res.json({ success: true, profile: usersProfiles.get(email) });
+    // Если пользователь новый
+    if (!users[email]) {
+        users[email] = {
+            email: email,
+            nickname: nickname,
+            avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}&backgroundColor=121212`,
+            isUncensored: false, // По умолчанию цензура включена
+            registeredAt: new Date().toISOString()
+        };
+    } else {
+        // Если уже существует, обновляем только ник и аватарку, сохраняя права (isUncensored)
+        users[email].nickname = nickname;
+        if (avatar) users[email].avatar = avatar;
+    }
+
+    saveUsers(users); // Перезаписываем файл
+    
+    res.json({ success: true, profile: users[email] });
+});
+
+// 4. Получение профиля (проверка прав при загрузке страницы)
+app.post('/api/get-profile', (req, res) => {
+    const { email } = req.body;
+    const users = getUsers();
+    
+    if (users[email]) {
+        res.json({ success: true, profile: users[email] });
+    } else {
+        res.status(404).json({ error: 'Пользователь не найден' });
+    }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`🚀 Сервер запущен на порту ${PORT} (Интеграция с Google Script активна)`);
+    console.log(`🚀 Сервер запущен на порту ${PORT} (База данных users.json подключена)`);
 });
