@@ -13,8 +13,10 @@ const verificationCodes = new Map();
 // Путь к файлу базы данных пользователей
 const USERS_FILE = path.join(__dirname, 'users.json');
 
-// Ваша рабочая ссылка из Google Apps Script
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxGF1m20kZmxGzBf3ZGPRItlpaP-2fW_ogmhm-ZKiT7FkInBknrwPmPs0gyaQKQOPXb4w/exec";
+// Ваша новая ссылка из Google Apps Script
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyef-au6hEXD_axsB3JDtbx9ugmSdAATKjGb3LbXTaCWoesxfyTl2x9Sz_xS0AxsZ6c/exec";
+
+
 
 // Функция чтения пользователей из файла
 function getUsers() {
