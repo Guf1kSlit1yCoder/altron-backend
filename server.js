@@ -4,7 +4,9 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
+// ВАЖНО: Увеличиваем лимит JSON для передачи картинок (аватаров в Base64)
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 
 // Временное хранилище кодов подтверждения (в оперативной памяти)
@@ -13,10 +15,8 @@ const verificationCodes = new Map();
 // Путь к файлу базы данных пользователей
 const USERS_FILE = path.join(__dirname, 'users.json');
 
-// Ваша новая ссылка из Google Apps Script
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw1sZSStrMMMurkGDLoJ3UTQBM_k51cK1QFg9U3g37ck_fXTZVImWe3nwUMhsDTT02M/exec";
-
-
+// Ваша рабочая ссылка из Google Apps Script
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyef-au6hEXD_axsB3JDtbx9ugmSdAATKjGb3LbXTaCWoesxfyTl2x9Sz_xS0AxsZ6c/exec";
 
 // Функция чтения пользователей из файла
 function getUsers() {
@@ -63,7 +63,6 @@ app.post('/api/send-code', async (req, res) => {
         
         if (!response.ok) throw new Error('Google вернул ошибку при отправке');
         
-        console.log(`Код ${code} отправлен на ${email}`);
         res.json({ success: true, message: 'Код отправлен' });
     } catch (error) {
         console.error('Ошибка:', error);
@@ -113,7 +112,7 @@ app.post('/api/save-profile', (req, res) => {
     res.json({ success: true, profile: users[email] });
 });
 
-// 4. Получение профиля (проверка прав при загрузке страницы)
+// 4. Получение профиля
 app.post('/api/get-profile', (req, res) => {
     const { email } = req.body;
     const users = getUsers();
@@ -125,7 +124,7 @@ app.post('/api/get-profile', (req, res) => {
     }
 });
 
-// 5. Сохранение истории чатов конкретного пользователя
+// 5. Сохранение истории чатов
 app.post('/api/save-chats', (req, res) => {
     const { email, chats } = req.body;
     if (!email) return res.status(400).json({ error: 'Email обязателен' });
@@ -140,7 +139,7 @@ app.post('/api/save-chats', (req, res) => {
     }
 });
 
-// 6. Получение истории чатов конкретного пользователя
+// 6. Получение истории чатов
 app.post('/api/get-chats', (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email обязателен' });
@@ -155,5 +154,5 @@ app.post('/api/get-chats', (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`🚀 Сервер запущен на порту ${PORT} (База данных users.json подключена)`);
+    console.log(`🚀 Сервер запущен на порту ${PORT} (Лимит 50MB подключен)`);
 });
