@@ -8,8 +8,8 @@ app.use(cors());
 const verificationCodes = new Map();
 const usersProfiles = new Map();
 
-// Ваша рабочая ссылка из Google Apps Script
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwTes2CLj0IbbIuMvIx_sJjiMRd6RlpEwDPnSj3B2dcguy3h9JH9kV1Y6g8JZtHzT17jA/exec";
+// Ваша новая рабочая ссылка из Google Apps Script
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxGF1m20kZmxGzBf3ZGPRItlpaP-2fW_ogmhm-ZKiT7FkInBknrwPmPs0gyaQKQOPXb4w/exec";
 
 // 1. Отправка реального кода через Google API
 app.post('/api/send-code', async (req, res) => {
@@ -24,8 +24,14 @@ app.post('/api/send-code', async (req, res) => {
     try {
         const response = await fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
-            body: JSON.stringify({ email: email, code: code })
+            headers: {
+                'Content-Type': 'text/plain;charset=utf-8',
+            },
+            body: JSON.stringify({ email: email, code: code }),
+            redirect: 'follow'
         });
+        
+        if (!response.ok) throw new Error('Google вернул ошибку при отправке');
         
         console.log(`Реальный код ${code} успешно отправлен на ${email}`);
         res.json({ success: true, message: 'Код отправлен' });
