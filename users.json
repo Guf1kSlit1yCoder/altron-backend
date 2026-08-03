@@ -3,7 +3,7 @@
         "email": "egorapostol8@gmail.com",
         "nickname": "Altron",
         "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=Altron&backgroundColor=121212",
-        "isUncensored": true,
+        "isUncensored": false,
         "registeredAt": "2024-01-01T00:00:00.000Z"
     }
 }
