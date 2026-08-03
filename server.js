@@ -4,10 +4,13 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-// ВАЖНО: Увеличиваем лимит JSON для передачи картинок (аватаров в Base64)
+// Увеличиваем лимит JSON для передачи аватарок и изображений (Base64)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
+
+// Email владельца системы, которому разрешено управлять DEV MODE
+const OWNER_EMAIL = "egorapostol9@gmail.com";
 
 // Временное хранилище кодов подтверждения (в оперативной памяти)
 const verificationCodes = new Map();
@@ -96,19 +99,17 @@ app.post('/api/save-profile', (req, res) => {
             email: email,
             nickname: nickname,
             avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}&backgroundColor=121212`,
-            isUncensored: false, // По умолчанию цензура включена
-            chats: [], // История диалогов
+            isUncensored: (email.toLowerCase() === OWNER_EMAIL.toLowerCase()), // Владельцу включено сразу
+            chats: [],
             registeredAt: new Date().toISOString()
         };
     } else {
-        // Если уже существует, обновляем ник и аватарку
         users[email].nickname = nickname;
         if (avatar) users[email].avatar = avatar;
         if (!users[email].chats) users[email].chats = [];
     }
 
-    saveUsers(users); // Перезаписываем файл
-    
+    saveUsers(users);
     res.json({ success: true, profile: users[email] });
 });
 
@@ -152,7 +153,44 @@ app.post('/api/get-chats', (req, res) => {
     }
 });
 
+// 7. АДМИН-ПАНЕЛЬ: Получить всех пользователей (доступно только владельцу)
+app.post('/api/admin/get-users', (req, res) => {
+    const { adminEmail } = req.body;
+    if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
+        return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
+    }
+
+    const users = getUsers();
+    const userList = Object.values(users).map(u => ({
+        email: u.email,
+        nickname: u.nickname,
+        avatar: u.avatar,
+        isUncensored: !!u.isUncensored,
+        registeredAt: u.registeredAt
+    }));
+
+    res.json({ success: true, users: userList });
+});
+
+// 8. АДМИН-ПАНЕЛЬ: Изменить статус DEV MODE у пользователя
+app.post('/api/admin/toggle-devmode', (req, res) => {
+    const { adminEmail, targetEmail, isUncensored } = req.body;
+    if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
+        return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
+    }
+
+    const users = getUsers();
+    if (users[targetEmail]) {
+        users[targetEmail].isUncensored = !!isUncensored;
+        saveUsers(users);
+        console.log(`[DEV MODE] Владелец изменил статус для ${targetEmail}: ${isUncensored}`);
+        res.json({ success: true, isUncensored: users[targetEmail].isUncensored });
+    } else {
+        res.status(404).json({ error: 'Пользователь не найден' });
+    }
+});
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`🚀 Сервер запущен на порту ${PORT} (Лимит 50MB подключен)`);
+    console.log(`🚀 Сервер запущен на порту ${PORT} (Владелец: ${OWNER_EMAIL})`);
 });
