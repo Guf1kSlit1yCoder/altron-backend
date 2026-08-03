@@ -1,25 +1,17 @@
 const express = require('express');
-const nodemailer = require('nodemailer');
 const cors = require('cors');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Временное хранилище кодов и профилей в памяти
 const verificationCodes = new Map();
 const usersProfiles = new Map();
 
-// --- НАСТРОЙКА ПОЧТЫ GMAIL ---
-const transporter = nodemailer.createTransport({
-    service: 'gmail', 
-    auth: {
-        user: 'Egorapostol9@gmail.com', 
-        pass: 'pofskegtstijcppw'        
-    }
-});
+// Ваша рабочая ссылка из Google Apps Script
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwTes2CLj0IbbIuMvIx_sJjiMRd6RlpEwDPnSj3B2dcguy3h9JH9kV1Y6g8JZtHzT17jA/exec";
 
-// 1. Отправка кода
+// 1. Отправка реального кода через Google API
 app.post('/api/send-code', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email обязателен' });
@@ -30,26 +22,16 @@ app.post('/api/send-code', async (req, res) => {
     setTimeout(() => verificationCodes.delete(email), 5 * 60 * 1000);
 
     try {
-        await transporter.sendMail({
-            from: '"Altron AI" <Egorapostol9@gmail.com>',
-            to: email,
-            subject: 'Код подтверждения | Altron AI SUPER 1.5',
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; background: #171717; color: white; padding: 30px; border-radius: 15px;">
-                    <h2 style="text-align: center; color: #fff;">Altron AI SUPER 1.5</h2>
-                    <p style="text-align: center; color: #a3a3a3;">Ваш код подтверждения:</p>
-                    <div style="background: #262626; padding: 20px; text-align: center; border-radius: 10px; margin: 20px 0;">
-                        <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #4F46E5;">${code}</span>
-                    </div>
-                    <p style="text-align: center; color: #737373; font-size: 12px;">Код действителен 5 минут.</p>
-                </div>
-            `
+        const response = await fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            body: JSON.stringify({ email: email, code: code })
         });
-        console.log(`Код ${code} отправлен на ${email}`);
+        
+        console.log(`Реальный код ${code} успешно отправлен на ${email}`);
         res.json({ success: true, message: 'Код отправлен' });
     } catch (error) {
-        console.error('Ошибка отправки почты:', error);
-        res.status(500).json({ error: 'Не удалось отправить письмо через Gmail.' });
+        console.error('Ошибка:', error);
+        res.status(500).json({ error: 'Не удалось связаться с сервером отправки' });
     }
 });
 
@@ -69,19 +51,15 @@ app.post('/api/verify-code', (req, res) => {
 // 3. Сохранение профиля
 app.post('/api/save-profile', (req, res) => {
     const { email, nickname, avatar } = req.body;
-    if (!email || !nickname) {
-        return res.status(400).json({ error: 'Заполните никнейм' });
-    }
+    if (!email || !nickname) return res.status(400).json({ error: 'Заполните никнейм' });
 
     const userAvatar = avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}`;
     usersProfiles.set(email, { nickname, avatar: userAvatar });
     
-    console.log(`Профиль сохранен: ${nickname} (${email})`);
     res.json({ success: true, profile: usersProfiles.get(email) });
 });
 
-// Порт для Render.com
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`🚀 Сервер запущен на порту ${PORT}`);
+    console.log(`🚀 Сервер запущен на порту ${PORT} (Интеграция с Google Script активна)`);
 });
