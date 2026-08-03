@@ -14,7 +14,7 @@ const verificationCodes = new Map();
 const USERS_FILE = path.join(__dirname, 'users.json');
 
 // Ваша новая ссылка из Google Apps Script
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyef-au6hEXD_axsB3JDtbx9ugmSdAATKjGb3LbXTaCWoesxfyTl2x9Sz_xS0AxsZ6c/exec";
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwl9s2QLOHF33oK8hAdusPmIQIbN1RD90Tajw5s5TQMty67d2QMXOe8codF43QZB7tY/exec";
 
 
 
