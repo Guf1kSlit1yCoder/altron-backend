@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+const mongoose = require('mongoose');
 
 const app = express();
 // Увеличиваем лимит JSON для передачи аватарок, изображений и Lottie-статусов (Base64)
@@ -15,38 +14,31 @@ const OWNER_EMAIL = "egorapostol9@gmail.com";
 // Временное хранилище кодов подтверждения (в оперативной памяти)
 const verificationCodes = new Map();
 
-// Путь к файлу базы данных пользователей
-const USERS_FILE = path.join(__dirname, 'users.json');
-
-// Ваша рабочая ссылка из Google Apps Script
+// Ваша рабочая ссылка из Google Apps Script для отправки почты
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyef-au6hEXD_axsB3JDtbx9ugmSdAATKjGb3LbXTaCWoesxfyTl2x9Sz_xS0AxsZ6c/exec";
 
 // Ваш API-ключ AnyModel
 const ANYMODEL_API_KEY = "sk-dc9d4b7df36ba555-0ftx1p-0544b8e2";
 
-// Функция чтения пользователей из файла
-function getUsers() {
-    try {
-        if (!fs.existsSync(USERS_FILE)) {
-            fs.writeFileSync(USERS_FILE, JSON.stringify({}), 'utf8');
-            return {};
-        }
-        const data = fs.readFileSync(USERS_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        console.error('Ошибка чтения users.json:', err);
-        return {};
-    }
-}
+// Подключение к MongoDB (берем из переменных окружения Render или используем вашу ссылку)
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://egorapostol9_db_user:Gs9pGJRCnOLa9cGQ@cluster0.bocpzhw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
-// Функция сохранения пользователей в файл
-function saveUsers(usersData) {
-    try {
-        fs.writeFileSync(USERS_FILE, JSON.stringify(usersData, null, 4), 'utf8');
-    } catch (err) {
-        console.error('Ошибка записи users.json:', err);
-    }
-}
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('🟢 Успешно подключено к MongoDB Atlas'))
+    .catch(err => console.error('🔴 Ошибка подключения к MongoDB:', err));
+
+// Схема пользователя в базе данных
+const userSchema = new mongoose.Schema({
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    nickname: { type: String, required: true },
+    avatar: { type: String },
+    statusEmoji: { type: String, default: null },
+    isUncensored: { type: Boolean, default: false },
+    chats: { type: Array, default: [] },
+    registeredAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
 
 // 1. Отправка реального кода через Google API
 app.post('/api/send-code', async (req, res) => {
@@ -71,7 +63,7 @@ app.post('/api/send-code', async (req, res) => {
         
         res.json({ success: true, message: 'Код отправлен' });
     } catch (error) {
-        console.error('Ошибка:', error);
+        console.error('Ошибка отправки кода:', error);
         res.status(500).json({ error: 'Не удалось связаться с сервером отправки' });
     }
 });
@@ -89,108 +81,138 @@ app.post('/api/verify-code', (req, res) => {
     res.json({ success: true, message: 'Код подтвержден' });
 });
 
-// 3. Сохранение/Обновление профиля в файл (включая Lottie статус)
-app.post('/api/save-profile', (req, res) => {
-    const { email, nickname, avatar, statusEmoji } = req.body;
-    if (!email || !nickname) return res.status(400).json({ error: 'Заполните никнейм' });
+// 3. Сохранение/Обновление профиля в MongoDB
+app.post('/api/save-profile', async (req, res) => {
+    try {
+        const { email, nickname, avatar, statusEmoji } = req.body;
+        if (!email || !nickname) return res.status(400).json({ error: 'Заполните никнейм' });
 
-    const users = getUsers();
-    
-    // Если пользователь новый
-    if (!users[email]) {
-        users[email] = {
-            email: email,
-            nickname: nickname,
-            avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}&backgroundColor=121212`,
-            statusEmoji: statusEmoji || null,
-            isUncensored: (email.toLowerCase() === OWNER_EMAIL.toLowerCase()),
-            chats: [],
-            registeredAt: new Date().toISOString()
-        };
-    } else {
-        users[email].nickname = nickname;
-        if (avatar) users[email].avatar = avatar;
-        if (statusEmoji !== undefined) users[email].statusEmoji = statusEmoji;
-        if (!users[email].chats) users[email].chats = [];
+        const cleanEmail = email.toLowerCase().trim();
+        let user = await User.findOne({ email: cleanEmail });
+        
+        if (!user) {
+            user = new User({
+                email: cleanEmail,
+                nickname: nickname,
+                avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}&backgroundColor=121212`,
+                statusEmoji: statusEmoji || null,
+                isUncensored: (cleanEmail === OWNER_EMAIL.toLowerCase()),
+                chats: []
+            });
+        } else {
+            user.nickname = nickname;
+            if (avatar) user.avatar = avatar;
+            if (statusEmoji !== undefined) user.statusEmoji = statusEmoji;
+        }
+
+        await user.save();
+        res.json({ success: true, profile: user });
+    } catch (err) {
+        console.error('Ошибка сохранения профиля:', err);
+        res.status(500).json({ error: 'Ошибка сервера при сохранении профиля' });
     }
-
-    saveUsers(users);
-    res.json({ success: true, profile: users[email] });
 });
 
 // 4. Получение профиля
-app.post('/api/get-profile', (req, res) => {
-    const { email } = req.body;
-    const users = getUsers();
-    
-    if (users[email]) {
-        res.json({ success: true, profile: users[email] });
-    } else {
-        res.status(404).json({ error: 'Пользователь не найден' });
+app.post('/api/get-profile', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email обязателен' });
+
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        
+        if (user) {
+            res.json({ success: true, profile: user });
+        } else {
+            res.status(404).json({ error: 'Пользователь не найден' });
+        }
+    } catch (err) {
+        console.error('Ошибка получения профиля:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
 // 5. Сохранение истории чатов
-app.post('/api/save-chats', (req, res) => {
-    const { email, chats } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email обязателен' });
+app.post('/api/save-chats', async (req, res) => {
+    try {
+        const { email, chats } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email обязателен' });
 
-    const users = getUsers();
-    if (users[email]) {
-        users[email].chats = chats || [];
-        saveUsers(users);
-        res.json({ success: true, message: 'История сохранена' });
-    } else {
-        res.status(404).json({ error: 'Пользователь не найден' });
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        if (user) {
+            user.chats = chats || [];
+            await user.save();
+            res.json({ success: true, message: 'История сохранена' });
+        } else {
+            res.status(404).json({ error: 'Пользователь не найден' });
+        }
+    } catch (err) {
+        console.error('Ошибка сохранения чатов:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
 // 6. Получение истории чатов
-app.post('/api/get-chats', (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email обязателен' });
+app.post('/api/get-chats', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email обязателен' });
 
-    const users = getUsers();
-    if (users[email]) {
-        res.json({ success: true, chats: users[email].chats || [] });
-    } else {
-        res.status(404).json({ error: 'Пользователь не найден' });
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        if (user) {
+            res.json({ success: true, chats: user.chats || [] });
+        } else {
+            res.status(404).json({ error: 'Пользователь не найден' });
+        }
+    } catch (err) {
+        console.error('Ошибка получения чатов:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
 // 7. АДМИН-ПАНЕЛЬ: Получить всех пользователей (доступно только владельцу)
-app.post('/api/admin/get-users', (req, res) => {
-    const { adminEmail } = req.body;
-    if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
-        return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
+app.post('/api/admin/get-users', async (req, res) => {
+    try {
+        const { adminEmail } = req.body;
+        if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
+            return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
+        }
+
+        const users = await User.find({});
+        const userList = users.map(u => ({
+            email: u.email,
+            nickname: u.nickname,
+            avatar: u.avatar,
+            isUncensored: !!u.isUncensored,
+            registeredAt: u.registeredAt
+        }));
+
+        res.json({ success: true, users: userList });
+    } catch (err) {
+        console.error('Ошибка админ-панели (get-users):', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
-
-    const users = getUsers();
-    const userList = Object.values(users).map(u => ({
-        email: u.email,
-        nickname: u.nickname,
-        avatar: u.avatar,
-        isUncensored: !!u.isUncensored,
-        registeredAt: u.registeredAt
-    }));
-
-    res.json({ success: true, users: userList });
 });
 
 // 8. АДМИН-ПАНЕЛЬ: Изменить статус DEV MODE у пользователя
-app.post('/api/admin/toggle-devmode', (req, res) => {
-    const { adminEmail, targetEmail, isUncensored } = req.body;
-    if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
-        return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
-    }
+app.post('/api/admin/toggle-devmode', async (req, res) => {
+    try {
+        const { adminEmail, targetEmail, isUncensored } = req.body;
+        if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
+            return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
+        }
 
-    const users = getUsers();
-    if (users[targetEmail]) {
-        users[targetEmail].isUncensored = !!isUncensored;
-        saveUsers(users);
-        res.json({ success: true, isUncensored: users[targetEmail].isUncensored });
-    } else {
-        res.status(404).json({ error: 'Пользователь не найден' });
+        const user = await User.findOne({ email: targetEmail.toLowerCase().trim() });
+        if (user) {
+            user.isUncensored = !!isUncensored;
+            await user.save();
+            res.json({ success: true, isUncensored: user.isUncensored });
+        } else {
+            res.status(404).json({ error: 'Пользователь не найден' });
+        }
+    } catch (err) {
+        console.error('Ошибка админ-панели (toggle-devmode):', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
