@@ -189,6 +189,87 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
+// Вспомогательная проверка: является ли email владельцем системы
+function isOwner(email) {
+    return !!email && email.toLowerCase().trim() === OWNER_EMAIL.toLowerCase();
+}
+
+// 6. АДМИН: получить список всех пользователей (для панели владельца)
+app.post('/api/admin/get-users', async (req, res) => {
+    try {
+        const { adminEmail } = req.body;
+        if (!isOwner(adminEmail)) return res.status(403).json({ error: 'Доступ запрещён' });
+
+        const users = await User.find({}, 'email nickname username avatar isUncensored registeredAt').sort({ registeredAt: -1 });
+        res.json({ success: true, users });
+    } catch (err) {
+        console.error('Ошибка получения списка пользователей:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 7. АДМИН: переключить безлимитный/DEV режим пользователю
+app.post('/api/admin/toggle-devmode', async (req, res) => {
+    try {
+        const { adminEmail, targetEmail, isUncensored } = req.body;
+        if (!isOwner(adminEmail)) return res.status(403).json({ error: 'Доступ запрещён' });
+        if (!targetEmail) return res.status(400).json({ error: 'targetEmail обязателен' });
+
+        const user = await User.findOneAndUpdate(
+            { email: targetEmail.toLowerCase().trim() },
+            { isUncensored: !!isUncensored },
+            { new: true }
+        );
+        if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+        res.json({ success: true, user });
+    } catch (err) {
+        console.error('Ошибка переключения DEV MODE:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 8. АДМИН: загрузка Lottie-эмодзи в общую библиотеку на сервере
+app.post('/api/admin/upload-lottie', async (req, res) => {
+    try {
+        const { adminEmail, name, animationData } = req.body;
+        if (!isOwner(adminEmail)) return res.status(403).json({ error: 'Доступ запрещён' });
+        if (!name || !animationData) return res.status(400).json({ error: 'name и animationData обязательны' });
+
+        const emoji = new LottieEmoji({ name: name.trim(), animationData });
+        await emoji.save();
+        res.json({ success: true, emoji });
+    } catch (err) {
+        console.error('Ошибка загрузки Lottie:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 9. АДМИН: удаление Lottie-эмодзи из библиотеки
+app.post('/api/admin/delete-lottie', async (req, res) => {
+    try {
+        const { adminEmail, id } = req.body;
+        if (!isOwner(adminEmail)) return res.status(403).json({ error: 'Доступ запрещён' });
+        if (!id) return res.status(400).json({ error: 'id обязателен' });
+
+        await LottieEmoji.findByIdAndDelete(id);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Ошибка удаления Lottie:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 10. ОБЩЕЕ: список всех Lottie-эмодзи из библиотеки (доступно всем пользователям для выбора)
+app.get('/api/lottie-emojis', async (req, res) => {
+    try {
+        const emojis = await LottieEmoji.find({}).sort({ uploadedAt: -1 });
+        res.json({ success: true, emojis });
+    } catch (err) {
+        console.error('Ошибка получения списка Lottie:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`🚀 Сервер запущен на порту ${PORT}`);
