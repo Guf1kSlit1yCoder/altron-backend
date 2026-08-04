@@ -3,36 +3,40 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const app = express();
-// Увеличиваем лимит JSON для передачи аватарок, изображений и Lottie-статусов (Base64)
+// Увеличиваем лимит JSON для передачи аватарок (Base64) и фонов
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 
-// Email владельца системы, которому разрешено управлять DEV MODE
+// Email владельца системы
 const OWNER_EMAIL = "egorapostol9@gmail.com";
 
-// Временное хранилище кодов подтверждения (в оперативной памяти)
+// Временное хранилище кодов подтверждения
 const verificationCodes = new Map();
 
-// Ваша рабочая ссылка из Google Apps Script для отправки почты
+// Ссылка из Google Apps Script для отправки почты
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyef-au6hEXD_axsB3JDtbx9ugmSdAATKjGb3LbXTaCWoesxfyTl2x9Sz_xS0AxsZ6c/exec";
 
-// Ваш API-ключ AnyModel
+// API-ключ AnyModel
 const ANYMODEL_API_KEY = "sk-dc9d4b7df36ba555-0ftx1p-0544b8e2";
 
-// Подключение к MongoDB (берем из переменных окружения Render или используем вашу ссылку)
+// Подключение к MongoDB
+// Если на Render не прописан MONGO_URI, будет использоваться ваша резервная ссылка
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://egorapostol9_db_user:Gs9pGJRCnOLa9cGQ@cluster0.bocpzhw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log('🟢 Успешно подключено к MongoDB Atlas'))
     .catch(err => console.error('🔴 Ошибка подключения к MongoDB:', err));
 
-// Схема пользователя в базе данных
+// Схема пользователя в стиле Telegram
 const userSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     nickname: { type: String, required: true },
-    avatar: { type: String },
-    statusEmoji: { type: String, default: null },
+    username: { type: String, sparse: true, lowercase: true, trim: true }, // @username (без @)
+    bio: { type: String, default: '' }, // О себе
+    avatar: { type: String }, // Base64 картинки
+    profileBackground: { type: String, default: null }, // Фон
+    statusEmoji: { type: String, default: null }, // Lottie или эмодзи
     isUncensored: { type: Boolean, default: false },
     chats: { type: Array, default: [] },
     registeredAt: { type: Date, default: Date.now }
@@ -40,15 +44,22 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// 1. Отправка реального кода через Google API
+// Схема для Lottie-анимаций (для статусов)
+const lottieSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    animationData: { type: String, required: true }, // JSON-код Lottie
+    uploadedAt: { type: Date, default: Date.now }
+});
+
+const LottieEmoji = mongoose.model('LottieEmoji', lottieSchema);
+
+// 1. Отправка кода на почту
 app.post('/api/send-code', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email обязателен' });
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     verificationCodes.set(email, code);
-    
-    // Код живет 5 минут
     setTimeout(() => verificationCodes.delete(email), 5 * 60 * 1000);
 
     try {
@@ -59,12 +70,10 @@ app.post('/api/send-code', async (req, res) => {
             redirect: 'follow'
         });
         
-        if (!response.ok) throw new Error('Google вернул ошибку при отправке');
-        
+        if (!response.ok) throw new Error('Google вернул ошибку');
         res.json({ success: true, message: 'Код отправлен' });
     } catch (error) {
-        console.error('Ошибка отправки кода:', error);
-        res.status(500).json({ error: 'Не удалось связаться с сервером отправки' });
+        res.status(500).json({ error: 'Не удалось отправить код' });
     }
 });
 
@@ -81,27 +90,35 @@ app.post('/api/verify-code', (req, res) => {
     res.json({ success: true, message: 'Код подтвержден' });
 });
 
-// 3. Сохранение/Обновление профиля в MongoDB
+// 3. Сохранение и редактирование профиля
 app.post('/api/save-profile', async (req, res) => {
     try {
-        const { email, nickname, avatar, statusEmoji } = req.body;
-        if (!email || !nickname) return res.status(400).json({ error: 'Заполните никнейм' });
+        const { email, nickname, username, avatar, profileBackground, bio, statusEmoji } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email обязателен' });
 
         const cleanEmail = email.toLowerCase().trim();
         let user = await User.findOne({ email: cleanEmail });
         
+        // Очищаем юзернейм от символа @ и пробелов
+        let cleanUsername = username ? username.replace('@', '').toLowerCase().trim() : null;
+
         if (!user) {
             user = new User({
                 email: cleanEmail,
-                nickname: nickname,
-                avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}&backgroundColor=121212`,
+                nickname: nickname || 'Пользователь',
+                username: cleanUsername,
+                avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${cleanEmail}&backgroundColor=121212`,
+                profileBackground: profileBackground || null,
+                bio: bio || '',
                 statusEmoji: statusEmoji || null,
-                isUncensored: (cleanEmail === OWNER_EMAIL.toLowerCase()),
-                chats: []
+                isUncensored: (cleanEmail === OWNER_EMAIL.toLowerCase())
             });
         } else {
-            user.nickname = nickname;
-            if (avatar) user.avatar = avatar;
+            if (nickname !== undefined) user.nickname = nickname;
+            if (cleanUsername !== undefined) user.username = cleanUsername;
+            if (avatar !== undefined) user.avatar = avatar;
+            if (profileBackground !== undefined) user.profileBackground = profileBackground;
+            if (bio !== undefined) user.bio = bio;
             if (statusEmoji !== undefined) user.statusEmoji = statusEmoji;
         }
 
@@ -109,125 +126,43 @@ app.post('/api/save-profile', async (req, res) => {
         res.json({ success: true, profile: user });
     } catch (err) {
         console.error('Ошибка сохранения профиля:', err);
-        res.status(500).json({ error: 'Ошибка сервера при сохранении профиля' });
+        // Проверка на уникальность username
+        if (err.code === 11000) {
+            return res.status(400).json({ error: 'Этот юзернейм (@username) уже занят' });
+        }
+        res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
-// 4. Получение профиля
+// 4. Получение профиля при загрузке страницы
 app.post('/api/get-profile', async (req, res) => {
     try {
         const { email } = req.body;
         if (!email) return res.status(400).json({ error: 'Email обязателен' });
 
         const user = await User.findOne({ email: email.toLowerCase().trim() });
-        
         if (user) {
             res.json({ success: true, profile: user });
         } else {
             res.status(404).json({ error: 'Пользователь не найден' });
         }
     } catch (err) {
-        console.error('Ошибка получения профиля:', err);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
 
-// 5. Сохранение истории чатов
-app.post('/api/save-chats', async (req, res) => {
-    try {
-        const { email, chats } = req.body;
-        if (!email) return res.status(400).json({ error: 'Email обязателен' });
-
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
-        if (user) {
-            user.chats = chats || [];
-            await user.save();
-            res.json({ success: true, message: 'История сохранена' });
-        } else {
-            res.status(404).json({ error: 'Пользователь не найден' });
-        }
-    } catch (err) {
-        console.error('Ошибка сохранения чатов:', err);
-        res.status(500).json({ error: 'Ошибка сервера' });
-    }
-});
-
-// 6. Получение истории чатов
-app.post('/api/get-chats', async (req, res) => {
-    try {
-        const { email } = req.body;
-        if (!email) return res.status(400).json({ error: 'Email обязателен' });
-
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
-        if (user) {
-            res.json({ success: true, chats: user.chats || [] });
-        } else {
-            res.status(404).json({ error: 'Пользователь не найден' });
-        }
-    } catch (err) {
-        console.error('Ошибка получения чатов:', err);
-        res.status(500).json({ error: 'Ошибка сервера' });
-    }
-});
-
-// 7. АДМИН-ПАНЕЛЬ: Получить всех пользователей (доступно только владельцу)
-app.post('/api/admin/get-users', async (req, res) => {
-    try {
-        const { adminEmail } = req.body;
-        if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
-            return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
-        }
-
-        const users = await User.find({});
-        const userList = users.map(u => ({
-            email: u.email,
-            nickname: u.nickname,
-            avatar: u.avatar,
-            isUncensored: !!u.isUncensored,
-            registeredAt: u.registeredAt
-        }));
-
-        res.json({ success: true, users: userList });
-    } catch (err) {
-        console.error('Ошибка админ-панели (get-users):', err);
-        res.status(500).json({ error: 'Ошибка сервера' });
-    }
-});
-
-// 8. АДМИН-ПАНЕЛЬ: Изменить статус DEV MODE у пользователя
-app.post('/api/admin/toggle-devmode', async (req, res) => {
-    try {
-        const { adminEmail, targetEmail, isUncensored } = req.body;
-        if (!adminEmail || adminEmail.toLowerCase() !== OWNER_EMAIL.toLowerCase()) {
-            return res.status(403).json({ error: 'Доступ запрещен. Только для владельца.' });
-        }
-
-        const user = await User.findOne({ email: targetEmail.toLowerCase().trim() });
-        if (user) {
-            user.isUncensored = !!isUncensored;
-            await user.save();
-            res.json({ success: true, isUncensored: user.isUncensored });
-        } else {
-            res.status(404).json({ error: 'Пользователь не найден' });
-        }
-    } catch (err) {
-        console.error('Ошибка админ-панели (toggle-devmode):', err);
-        res.status(500).json({ error: 'Ошибка сервера' });
-    }
-});
-
-// 9. ЧАТ С ИИ (Интеграция с AnyModel шлюзом)
+// 5. ЧАТ С ИИ (AnyModel)
 app.post('/api/chat', async (req, res) => {
     try {
         const { messages, message, model } = req.body;
-
         let chatMessages = [];
+        
         if (Array.isArray(messages) && messages.length > 0) {
             chatMessages = messages;
         } else if (message) {
             chatMessages = [{ role: 'user', content: message }];
         } else {
-            return res.status(400).json({ error: 'Не передано сообщение или история чата' });
+            return res.status(400).json({ error: 'Пустое сообщение' });
         }
 
         const response = await fetch('https://anymodel.org/v1/chat/completions', {
@@ -244,24 +179,17 @@ app.post('/api/chat', async (req, res) => {
         });
 
         const data = await response.json();
-
         if (!response.ok) {
-            console.error('Ошибка от AnyModel:', data);
-            return res.status(response.status).json({ 
-                error: data.error?.message || 'Ошибка со стороны AnyModel API' 
-            });
+            return res.status(response.status).json({ error: data.error?.message || 'Ошибка AnyModel' });
         }
 
-        const aiReply = data.choices[0].message.content;
-        res.json({ success: true, reply: aiReply, usage: data.usage || null });
-
+        res.json({ success: true, reply: data.choices[0].message.content });
     } catch (error) {
-        console.error('Ошибка бэкенд-сервера чата:', error);
-        res.status(500).json({ error: 'Внутренняя ошибка сервера при обращении к AnyModel' });
+        res.status(500).json({ error: 'Внутренняя ошибка сервера чата' });
     }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    console.log(`🚀 Сервер запущен на порту ${PORT} (Владелец: ${OWNER_EMAIL})`);
+    console.log(`🚀 Сервер запущен на порту ${PORT}`);
 });
