@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-// Увеличиваем лимит JSON для передачи аватарок и изображений (Base64)
+// Увеличиваем лимит JSON для передачи аватарок, изображений и Lottie-статусов (Base64)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
@@ -86,9 +86,9 @@ app.post('/api/verify-code', (req, res) => {
     res.json({ success: true, message: 'Код подтвержден' });
 });
 
-// 3. Сохранение/Обновление профиля в файл (JSON База Данных)
+// 3. Сохранение/Обновление профиля в файл (включая Lottie статус)
 app.post('/api/save-profile', (req, res) => {
-    const { email, nickname, avatar } = req.body;
+    const { email, nickname, avatar, statusEmoji } = req.body;
     if (!email || !nickname) return res.status(400).json({ error: 'Заполните никнейм' });
 
     const users = getUsers();
@@ -99,13 +99,15 @@ app.post('/api/save-profile', (req, res) => {
             email: email,
             nickname: nickname,
             avatar: avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${nickname}&backgroundColor=121212`,
-            isUncensored: (email.toLowerCase() === OWNER_EMAIL.toLowerCase()), // Владельцу включено сразу
+            statusEmoji: statusEmoji || null,
+            isUncensored: (email.toLowerCase() === OWNER_EMAIL.toLowerCase()),
             chats: [],
             registeredAt: new Date().toISOString()
         };
     } else {
         users[email].nickname = nickname;
         if (avatar) users[email].avatar = avatar;
+        if (statusEmoji !== undefined) users[email].statusEmoji = statusEmoji;
         if (!users[email].chats) users[email].chats = [];
     }
 
@@ -183,7 +185,6 @@ app.post('/api/admin/toggle-devmode', (req, res) => {
     if (users[targetEmail]) {
         users[targetEmail].isUncensored = !!isUncensored;
         saveUsers(users);
-        console.log(`[DEV MODE] Владелец изменил статус для ${targetEmail}: ${isUncensored}`);
         res.json({ success: true, isUncensored: users[targetEmail].isUncensored });
     } else {
         res.status(404).json({ error: 'Пользователь не найден' });
