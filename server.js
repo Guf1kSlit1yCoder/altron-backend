@@ -21,6 +21,9 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 // Ваша рабочая ссылка из Google Apps Script
 const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyef-au6hEXD_axsB3JDtbx9ugmSdAATKjGb3LbXTaCWoesxfyTl2x9Sz_xS0AxsZ6c/exec";
 
+// Ваш API-ключ AnyModel
+const ANYMODEL_API_KEY = "sk-dc9d4b7df36ba555-0ftx1p-0544b8e2";
+
 // Функция чтения пользователей из файла
 function getUsers() {
     try {
@@ -188,6 +191,51 @@ app.post('/api/admin/toggle-devmode', (req, res) => {
         res.json({ success: true, isUncensored: users[targetEmail].isUncensored });
     } else {
         res.status(404).json({ error: 'Пользователь не найден' });
+    }
+});
+
+// 9. ЧАТ С ИИ (Интеграция с AnyModel шлюзом)
+app.post('/api/chat', async (req, res) => {
+    try {
+        const { messages, message, model } = req.body;
+
+        let chatMessages = [];
+        if (Array.isArray(messages) && messages.length > 0) {
+            chatMessages = messages;
+        } else if (message) {
+            chatMessages = [{ role: 'user', content: message }];
+        } else {
+            return res.status(400).json({ error: 'Не передано сообщение или история чата' });
+        }
+
+        const response = await fetch('https://anymodel.org/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${ANYMODEL_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: model || "am/gpt-5.6-terra",
+                messages: chatMessages,
+                temperature: 0.7
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error('Ошибка от AnyModel:', data);
+            return res.status(response.status).json({ 
+                error: data.error?.message || 'Ошибка со стороны AnyModel API' 
+            });
+        }
+
+        const aiReply = data.choices[0].message.content;
+        res.json({ success: true, reply: aiReply, usage: data.usage || null });
+
+    } catch (error) {
+        console.error('Ошибка бэкенд-сервера чата:', error);
+        res.status(500).json({ error: 'Внутренняя ошибка сервера при обращении к AnyModel' });
     }
 });
 
