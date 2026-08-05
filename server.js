@@ -21,7 +21,6 @@ const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyef-au6hEXD_
 const ANYMODEL_API_KEY = "sk-dc9d4b7df36ba555-0ftx1p-0544b8e2";
 
 // Подключение к MongoDB
-// Если на Render не прописан MONGO_URI, будет использоваться ваша резервная ссылка
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://egorapostol9_db_user:Gs9pGJRCnOLa9cGQ@cluster0.bocpzhw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
 mongoose.connect(MONGO_URI)
@@ -32,7 +31,7 @@ mongoose.connect(MONGO_URI)
 const userSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     nickname: { type: String, required: true },
-    username: { type: String, sparse: true, lowercase: true, trim: true }, // @username (без @)
+    username: { type: String, sparse: true, lowercase: true, trim: true, unique: true }, // @username (без @)
     bio: { type: String, default: '' }, // О себе
     avatar: { type: String }, // Base64 картинки
     profileBackground: { type: String, default: null }, // Фон
@@ -43,6 +42,16 @@ const userSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model('User', userSchema);
+
+// Схема для отправленных сообщений/кодов между пользователями
+const messageSchema = new mongoose.Schema({
+    senderEmail: { type: String, required: true, lowercase: true, trim: true },
+    recipientEmail: { type: String, required: true, lowercase: true, trim: true },
+    codeContent: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now }
+});
+
+const SharedMessage = mongoose.model('SharedMessage', messageSchema);
 
 // Схема для Lottie-анимаций (для статусов)
 const lottieSchema = new mongoose.Schema({
@@ -126,9 +135,8 @@ app.post('/api/save-profile', async (req, res) => {
         res.json({ success: true, profile: user });
     } catch (err) {
         console.error('Ошибка сохранения профиля:', err);
-        // Проверка на уникальность username
         if (err.code === 11000) {
-            return res.status(400).json({ error: 'Этот юзернейм (@username) уже занят' });
+            return res.status(400).json({ error: 'Этот юзернейм (@username) уже занят другим пользователем' });
         }
         res.status(500).json({ error: 'Ошибка сервера' });
     }
@@ -147,6 +155,47 @@ app.post('/api/get-profile', async (req, res) => {
             res.status(404).json({ error: 'Пользователь не найден' });
         }
     } catch (err) {
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 4.1. Поиск пользователей по юзернейму (@username) для мессенджера
+app.post('/api/search-users', async (req, res) => {
+    try {
+        const { query, currentEmail } = req.body;
+        if (!query) return res.json({ success: true, users: [] });
+
+        const cleanQuery = query.replace('@', '').toLowerCase().trim();
+        const users = await User.find({
+            username: { $regex: cleanQuery, $options: 'i' },
+            email: { $ne: currentEmail ? currentEmail.toLowerCase().trim() : '' }
+        }).select('nickname username avatar email').limit(10);
+
+        res.json({ success: true, users });
+    } catch (err) {
+        console.error('Ошибка поиска пользователей:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 4.2. Отправка сообщения с кодом пользователю
+app.post('/api/send-code-message', async (req, res) => {
+    try {
+        const { senderEmail, recipientEmail, codeContent } = req.body;
+        if (!senderEmail || !recipientEmail || !codeContent) {
+            return res.status(400).json({ error: 'Все поля обязательны' });
+        }
+
+        const newMessage = new SharedMessage({
+            senderEmail: senderEmail.toLowerCase().trim(),
+            recipientEmail: recipientEmail.toLowerCase().trim(),
+            codeContent
+        });
+
+        await newMessage.save();
+        res.json({ success: true, message: 'Код успешно отправлен' });
+    } catch (err) {
+        console.error('Ошибка отправки кода:', err);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
@@ -189,12 +238,12 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
-// Вспомогательная проверка: является ли email владельцем системы
+// Вспомогательная проверка владельца
 function isOwner(email) {
     return !!email && email.toLowerCase().trim() === OWNER_EMAIL.toLowerCase();
 }
 
-// 6. АДМИН: получить список всех пользователей (для панели владельца)
+// 6. АДМИН: получить список всех пользователей
 app.post('/api/admin/get-users', async (req, res) => {
     try {
         const { adminEmail } = req.body;
@@ -208,7 +257,7 @@ app.post('/api/admin/get-users', async (req, res) => {
     }
 });
 
-// 7. АДМИН: переключить безлимитный/DEV режим пользователю
+// 7. АДМИН: переключить безлимитный/DEV режим
 app.post('/api/admin/toggle-devmode', async (req, res) => {
     try {
         const { adminEmail, targetEmail, isUncensored } = req.body;
@@ -228,7 +277,7 @@ app.post('/api/admin/toggle-devmode', async (req, res) => {
     }
 });
 
-// 8. АДМИН: загрузка Lottie-эмодзи в общую библиотеку на сервере
+// 8. АДМИН: загрузка Lottie-эмодзи
 app.post('/api/admin/upload-lottie', async (req, res) => {
     try {
         const { adminEmail, name, animationData } = req.body;
@@ -244,7 +293,7 @@ app.post('/api/admin/upload-lottie', async (req, res) => {
     }
 });
 
-// 9. АДМИН: удаление Lottie-эмодзи из библиотеки
+// 9. АДМИН: удаление Lottie-эмодзи
 app.post('/api/admin/delete-lottie', async (req, res) => {
     try {
         const { adminEmail, id } = req.body;
@@ -259,7 +308,7 @@ app.post('/api/admin/delete-lottie', async (req, res) => {
     }
 });
 
-// 10. ОБЩЕЕ: список всех Lottie-эмодзи из библиотеки (доступно всем пользователям для выбора)
+// 10. ОБЩЕЕ: список всех Lottie-эмодзи
 app.get('/api/lottie-emojis', async (req, res) => {
     try {
         const emojis = await LottieEmoji.find({}).sort({ uploadedAt: -1 });
