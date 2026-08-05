@@ -256,6 +256,33 @@ app.post('/api/get-messages', async (req, res) => {
     }
 });
 
+// 4.5. Получение списка всех чатов пользователя (включая тех, кто написал первым)
+app.post('/api/get-my-chats', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email обязателен' });
+
+        const cleanEmail = email.toLowerCase().trim();
+
+        const messages = await ChatMessage.find({
+            $or: [{ sender: cleanEmail }, { recipient: cleanEmail }]
+        }).sort({ timestamp: -1 });
+
+        const partnerEmails = new Set();
+        messages.forEach(msg => {
+            if (msg.sender === cleanEmail) partnerEmails.add(msg.recipient);
+            if (msg.recipient === cleanEmail) partnerEmails.add(msg.sender);
+        });
+
+        const partners = await User.find({ email: { $in: Array.from(partnerEmails) } }).select('nickname username avatar email');
+
+        res.json({ success: true, chats: partners });
+    } catch (err) {
+        console.error('Ошибка получения списка чатов:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
 // 5. ЧАТ С ИИ (AnyModel)
 app.post('/api/chat', async (req, res) => {
     try {
