@@ -53,6 +53,16 @@ const messageSchema = new mongoose.Schema({
 
 const SharedMessage = mongoose.model('SharedMessage', messageSchema);
 
+// Схема для личных текстовых сообщений в мессенджере
+const chatMessageSchema = new mongoose.Schema({
+    sender: { type: String, required: true, lowercase: true, trim: true },
+    recipient: { type: String, required: true, lowercase: true, trim: true },
+    content: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now }
+});
+
+const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
+
 // Схема для Lottie-анимаций (для статусов)
 const lottieSchema = new mongoose.Schema({
     name: { type: String, required: true },
@@ -108,7 +118,6 @@ app.post('/api/save-profile', async (req, res) => {
         const cleanEmail = email.toLowerCase().trim();
         let user = await User.findOne({ email: cleanEmail });
         
-        // Очищаем юзернейм от символа @ и пробелов
         let cleanUsername = username ? username.replace('@', '').toLowerCase().trim() : null;
 
         if (!user) {
@@ -196,6 +205,53 @@ app.post('/api/send-code-message', async (req, res) => {
         res.json({ success: true, message: 'Код успешно отправлен' });
     } catch (err) {
         console.error('Ошибка отправки кода:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 4.3. Отправка личного сообщения в мессенджере
+app.post('/api/send-message', async (req, res) => {
+    try {
+        const { sender, recipient, content } = req.body;
+        if (!sender || !recipient || !content) {
+            return res.status(400).json({ error: 'Все поля обязательны' });
+        }
+
+        const chatMsg = new ChatMessage({
+            sender: sender.toLowerCase().trim(),
+            recipient: recipient.toLowerCase().trim(),
+            content: content.trim()
+        });
+
+        await chatMsg.save();
+        res.json({ success: true, message: chatMsg });
+    } catch (err) {
+        console.error('Ошибка отправки сообщения:', err);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// 4.4. Получение истории личных сообщений между двумя пользователями
+app.post('/api/get-messages', async (req, res) => {
+    try {
+        const { user1, user2 } = req.body;
+        if (!user1 || !user2) {
+            return res.status(400).json({ error: 'Укажите обоих пользователей' });
+        }
+
+        const cleanUser1 = user1.toLowerCase().trim();
+        const cleanUser2 = user2.toLowerCase().trim();
+
+        const messages = await ChatMessage.find({
+            $or: [
+                { sender: cleanUser1, recipient: cleanUser2 },
+                { sender: cleanUser2, recipient: cleanUser1 }
+            ]
+        }).sort({ timestamp: 1 });
+
+        res.json({ success: true, messages });
+    } catch (err) {
+        console.error('Ошибка получения сообщений:', err);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 });
